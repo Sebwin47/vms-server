@@ -10,7 +10,7 @@ const skills = require("./skills.json");
 
 
 const app = express();
-const port = 3322;
+const port = process.env.PORT || 4000;
 
 app.use(cors({
   origin: '*'}));
