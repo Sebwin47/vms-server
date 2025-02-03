@@ -13,7 +13,7 @@ const app = express();
 const port = 3322;
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://192.168.100.73:5173']}));
+  origin: ['http://localhost:5173', 'https://vms-jku.vercel.app:5173']}));
 
 app.use(bodyParser.json())
 
@@ -1110,9 +1110,6 @@ app.get("/skills", (req, res) => {
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+  console.log(`Server running on :${port}`);
 });
 
-app.listen(port, "192.168.100.73", () => {
-  console.log("Server running on http://192.168.100.73:3322");
-});
