@@ -562,6 +562,7 @@ app.post("/signup", async (req, res) => {
         password: $hashedPassword,
         dateCreated: datetime(),
         streak: 0
+        goal: 30
       })
       RETURN v.email
     `;
@@ -607,6 +608,7 @@ app.post("/login", async (req, res) => {
     if (result.records.length === 0) {
       return res.status(404).json({ message: "Benutzer nicht gefunden." });
     }
+    console.log(result.records[0].get("hashedPassword"));
 
     const hashedPassword = result.records[0].get("hashedPassword");
     const isPasswordValid = await bcrypt.compare(password, hashedPassword);
