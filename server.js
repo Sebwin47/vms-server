@@ -16,13 +16,13 @@ app.use(cors({
     origin: ['http://localhost:5173', 'https://vms-jku.vercel.app']}));
 
 app.use(bodyParser.json())
-/* 
-// Neo4j driver setup
+
+/* // Neo4j driver setup
 const driver = neo4j.driver(
   'bolt://localhost:7689', // Ensure this matches your Neo4j setup
   //neo4j.auth.basic('neo4j', 'password') // Replace with your Neo4j credentials
-);
- */
+); */
+
 
 const driver = neo4j.driver(
   process.env.NEO4J_URI,
@@ -184,7 +184,7 @@ app.get("/admin-query", async (req, res) => {
         AND NOT (v)-[:ASSIGNED_TO]->(t)
         ${taskName ? `AND t.name CONTAINS $taskName` : ""}
         AND NOT EXISTS {
-          (v)-[:IS_PART_OF|IS_LEADER]->(:Group)-[:ASSIGNED_TO]->(t)
+          (v)-[:IS_PART_OF]->(:Group)-[:ASSIGNED_TO]->(t)
         }
       WITH t, v, required, s,
         CASE
@@ -336,6 +336,7 @@ app.post("/tasks", async (req, res) => {
     location,
     skills,
     neededPersons,
+    tolerance,
     categoryId,
   } = req.body;
 
@@ -352,7 +353,8 @@ app.post("/tasks", async (req, res) => {
          status: $status,
          priority: $priority,
          remarks: $remarks,
-         neededPersons: $neededPersons
+         neededPersons: $neededPersons,
+         tolerance: $tolerance
        })
        CREATE (t)-[:IS_INSTANCE_OF]->(c)
        WITH t
@@ -380,6 +382,7 @@ app.post("/tasks", async (req, res) => {
         priority,
         remarks,
         neededPersons: neo4j.int(neededPersons),
+        tolerance: neo4j.int(tolerance),
         categoryId: neo4j.int(categoryId),
         skills: skills,
         ...location,
@@ -545,8 +548,6 @@ app.post("/signup", async (req, res) => {
     return res.status(400).json({ message: "Email und Passwort sind erforderlich." });
   }
 
-  console.log("test");
-
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     const session = driver.session();
@@ -608,7 +609,6 @@ app.post("/login", async (req, res) => {
     if (result.records.length === 0) {
       return res.status(404).json({ message: "Benutzer nicht gefunden." });
     }
-    console.log(result.records[0].get("hashedPassword"));
 
     const hashedPassword = result.records[0].get("hashedPassword");
     const isPasswordValid = await bcrypt.compare(password, hashedPassword);
@@ -906,7 +906,8 @@ app.get("/leaderboard/volunteers", async (req, res) => {
 
     const query = `
       MATCH (v:Volunteer)-[w:WORKED_ON]->(:Task)
-      RETURN v.familyName as volunteerName, SUM(w.duration) AS totalHours LIMIT 5
+      RETURN v.familyName as volunteerName, SUM(w.duration) AS totalHours 
+      ORDER BY totalHours DESC LIMIT 5 
     `;
 
     const result = await session.run(query);
