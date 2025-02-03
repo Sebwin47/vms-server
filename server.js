@@ -545,6 +545,8 @@ app.post("/signup", async (req, res) => {
     return res.status(400).json({ message: "Email und Passwort sind erforderlich." });
   }
 
+  console.log("test");
+
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     const session = driver.session();
