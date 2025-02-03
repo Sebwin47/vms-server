@@ -10,7 +10,7 @@ const skills = require("./skills.json");
 
 
 const app = express();
-const port = process.env.PORT || 4000;
+const port = process.env.PORT || 3322;
 
 app.use(cors({
   origin: '*'}));
@@ -1120,6 +1120,6 @@ app.get("/skills", (req, res) => {
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server running on :${port}`);
+  console.log(`Server is listening on port ${port}`);
 });
 
