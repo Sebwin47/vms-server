@@ -13,7 +13,7 @@ const app = express();
 const port = process.env.PORT || 3322;
 
 app.use(cors({
-  origin: '*'}));
+    origin: ['http://localhost:5173', 'https://vms-jku.vercel.app']}));
 
 app.use(bodyParser.json())
 /* 
