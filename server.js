@@ -16,13 +16,21 @@ app.use(cors({
   origin: ['http://localhost:5173', 'https://vms-jku.vercel.app:5173']}));
 
 app.use(bodyParser.json())
-
+/* 
 // Neo4j driver setup
 const driver = neo4j.driver(
   'bolt://localhost:7689', // Ensure this matches your Neo4j setup
   //neo4j.auth.basic('neo4j', 'password') // Replace with your Neo4j credentials
 );
+ */
 
+const driver = neo4j.driver(
+  process.env.NEO4J_URI,
+  neo4j.auth.basic(
+    process.env.NEO4J_USERNAME,
+    process.env.NEO4J_PASSWORD
+  )
+);
 
 const JWT_SECRET = process.env.JWT_SECRET || "dummysecret";
 
