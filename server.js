@@ -8,21 +8,14 @@ require("dotenv").config();
 const skills = require("./skills.json"); 
 
 
-
 const app = express();
-const port = process.env.PORT || 3322;
+const port = process.env.PORT;
 
 app.use(cors({
-    origin: ['http://localhost:5173', 'https://vms-jku.vercel.app']}));
+  origin: process.env.CORS_ORIGINS.split(',')
+}));
 
 app.use(bodyParser.json())
-
-/* // Neo4j driver setup
-const driver = neo4j.driver(
-  'bolt://localhost:7689', // Ensure this matches your Neo4j setup
-  //neo4j.auth.basic('neo4j', 'password') // Replace with your Neo4j credentials
-); */
-
 
 const driver = neo4j.driver(
   process.env.NEO4J_URI,
@@ -32,8 +25,7 @@ const driver = neo4j.driver(
   )
 );
 
-const JWT_SECRET = process.env.JWT_SECRET || "dummysecret";
-
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const session = driver.session();
 
@@ -1119,10 +1111,12 @@ app.get("/skills", (req, res) => {
 
 
 
-
-
 // Start the server
 app.listen(port, () => {
   console.log(`Server is listening on port ${port}`);
 });
 
+process.on('SIGTERM', () => {
+  session.close();
+  driver.close();
+});
