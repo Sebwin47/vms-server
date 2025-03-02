@@ -149,6 +149,29 @@ app.get('/tasks', async (req, res) => {
   }
 });
 
+app.get("/task-suggestions", async (req, res) => {
+  const { query = "" } = req.query;
+  const session = driver.session();
+
+  try {
+    const result = await session.run(
+      `MATCH (t:Task)
+       WHERE t.name CONTAINS $query
+       RETURN t.name AS taskName
+       LIMIT 100`,
+      { query }
+    );
+
+    const tasks = result.records.map(record => record.get("taskName"));
+    res.json({ tasks });
+  } catch (error) {
+    console.error("Error fetching task suggestions:", error);
+    res.status(500).json({ error: "Error fetching suggestions" });
+  } finally {
+    await session.close();
+  }
+});
+
 app.get("/admin-query", async (req, res) => {
   const { taskName = "", matchType = "exact" } = req.query;
   const session = driver.session();
@@ -534,7 +557,7 @@ app.get("/place/:pid", async (req, res) => {
 });
 
 app.post("/signup", async (req, res) => {
-  const { givenName, familyName, email, gender, telephone, password} = req.body;
+  const {givenName, familyName, email, gender, telephone, password} = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ message: "Email und Passwort sind erforderlich." });
@@ -554,7 +577,7 @@ app.post("/signup", async (req, res) => {
         telephone: $telephone,
         password: $hashedPassword,
         dateCreated: datetime(),
-        streak: 0
+        streak: 0,
         goal: 30
       })
       RETURN v.email
@@ -567,12 +590,11 @@ app.post("/signup", async (req, res) => {
       gender,
       telephone,
       hashedPassword,
-
     });
 
-    res.status(201).json({ message: "User erfolgreich erstellt.", email: result.records[0].get("v.email") });
+    res.status(201).json({ message: "User successfully created.", email: result.records[0].get("v.email") });
   } catch (error) {
-    console.error("Fehler beim Signup:", error);
+    console.error("Error during signup:", error);
     res.status(500).json({ message: "Fehler beim Signup.", error: error.message });
   } finally {
     await session.close();
@@ -590,10 +612,10 @@ app.post("/login", async (req, res) => {
   try {
     const session = driver.session();
 
-
     const query = `
-      MATCH (v:Volunteer {email: $email})
-      RETURN v.password AS hashedPassword, v
+      MATCH (u) 
+      WHERE (u:Volunteer OR u:Coordinator) AND u.email = $email
+      RETURN u.password AS hashedPassword, u, labels(u) AS labels
     `;
 
     const result = await session.run(query, { email });
@@ -602,24 +624,39 @@ app.post("/login", async (req, res) => {
       return res.status(404).json({ message: "Benutzer nicht gefunden." });
     }
 
-    const hashedPassword = result.records[0].get("hashedPassword");
+    const record = result.records[0];
+    const hashedPassword = record.get("hashedPassword");
     const isPasswordValid = await bcrypt.compare(password, hashedPassword);
 
     if (!isPasswordValid) {
       return res.status(401).json({ message: "Ungültiges Passwort." });
     }
 
-    const user = result.records[0].get("v").properties;
-    const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: "1h" });
+    const user = record.get("u").properties;
+    const labels = record.get("labels");
+    const role = labels.includes("Coordinator") ? "coordinator" : "volunteer";
 
-    res.json({ message: "Login erfolgreich.", token, user });
+    const token = jwt.sign({ 
+      email: user.email,
+      role: role
+    }, JWT_SECRET, { expiresIn: "1h" });
+
+    res.json({ 
+      message: "Login erfolgreich.", 
+      token, 
+      user: {
+        ...user,
+        role: role
+      }
+    });
   } catch (error) {
     console.error("Fehler beim Login:", error);
     res.status(500).json({ message: "Fehler beim Login.", error: error.message });
-  }  finally {
+  } finally {
     await session.close();
   }
 });
+
 // Profile GET Route
 app.get("/profile", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
