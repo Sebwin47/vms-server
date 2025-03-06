@@ -5,7 +5,6 @@ var bodyParser = require('body-parser')
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
-const skills = require("./skills.json"); 
 
 
 const app = express();
@@ -40,7 +39,6 @@ app.get('/tasks', async (req, res) => {
     token = "" 
   } = req.query;
 
-  // Verarbeitung der Locality-Chips als OR-Bedingung
   let localityFilter = "";
   if (locality) {
     const localities = locality.split(",").map(loc => loc.trim()).filter(loc => loc !== "");
@@ -80,7 +78,7 @@ app.get('/tasks', async (req, res) => {
           ${endDateFilter}
           ${statusFilter}
       RETURN t.name AS taskName, 
-             collect(DISTINCT s.name) AS skills, 
+             s.name AS skills, 
              p.addressLocality AS location, 
              t.startDate AS startDate, 
              t.endDate AS endDate, 
@@ -110,7 +108,7 @@ app.get('/tasks', async (req, res) => {
       pid: record.get('pid').toNumber(),
     }));
 
-    // Check if the user is assigned to each task if a token is provided
+    // Check how the user is assigned to each task
     if (token) {
       const decoded = jwt.verify(token, JWT_SECRET);
       const email = decoded.email;
@@ -157,8 +155,7 @@ app.get("/task-suggestions", async (req, res) => {
     const result = await session.run(
       `MATCH (t:Task)
        WHERE t.name CONTAINS $query
-       RETURN t.name AS taskName
-       LIMIT 100`,
+       RETURN t.name AS taskName`,
       { query }
     );
 
@@ -479,42 +476,6 @@ app.get("/volunteer/:vid", async (req, res) => {
   }
 });
 
-app.get("/task/:tid", async (req, res) => {
-  const { tid } = req.params;
-  const session = driver.session();
-
-  try {
-    const query = `
-      MATCH (t:Task)
-      WHERE ID(t) = $tid
-      RETURN t.name AS name, 
-             t.description AS description, 
-             t.startDate AS startDate, 
-             t.endDate AS endDate, 
-             t.status AS status
-    `;
-    const result = await session.run(query, { tid: parseInt(tid, 10) });
-    const record = result.records[0];
-
-    if (record) {
-      res.json({
-        name: record.get("name"),
-        description: record.get("description"),
-        startDate: record.get("startDate").toStandardDate(),
-        endDate: record.get("endDate").toStandardDate(),
-        status: record.get("status"),
-      });
-    } else {
-      res.status(404).json({ error: "Task not found" });
-    }
-  } catch (error) {
-    console.error("Error fetching task details:", error);
-    res.status(500).json({ error: "Error fetching task details" });
-  } finally {
-    await session.close();
-  }
-});
-
 app.get("/place/:pid", async (req, res) => {
   const { pid } = req.params;
   const session = driver.session();
@@ -560,7 +521,7 @@ app.post("/signup", async (req, res) => {
   const {givenName, familyName, email, gender, telephone, password} = req.body;
 
   if (!email || !password) {
-    return res.status(400).json({ message: "Email und Passwort sind erforderlich." });
+    return res.status(400).json({ message: "Email and Password are required." });
   }
 
   try {
@@ -595,7 +556,7 @@ app.post("/signup", async (req, res) => {
     res.status(201).json({ message: "User successfully created.", email: result.records[0].get("v.email") });
   } catch (error) {
     console.error("Error during signup:", error);
-    res.status(500).json({ message: "Fehler beim Signup.", error: error.message });
+    res.status(500).json({ message: "Error during signup.", error: error.message });
   } finally {
     await session.close();
   }
@@ -606,7 +567,7 @@ app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.status(400).json({ message: "Email und Passwort sind erforderlich." });
+    return res.status(400).json({ message: "Email and Password are required." });
   }
 
   try {
@@ -621,7 +582,7 @@ app.post("/login", async (req, res) => {
     const result = await session.run(query, { email });
 
     if (result.records.length === 0) {
-      return res.status(404).json({ message: "Benutzer nicht gefunden." });
+      return res.status(404).json({ message: "User not found." });
     }
 
     const record = result.records[0];
@@ -629,7 +590,7 @@ app.post("/login", async (req, res) => {
     const isPasswordValid = await bcrypt.compare(password, hashedPassword);
 
     if (!isPasswordValid) {
-      return res.status(401).json({ message: "Ungültiges Passwort." });
+      return res.status(401).json({ message: "Wrong password." });
     }
 
     const user = record.get("u").properties;
@@ -642,7 +603,7 @@ app.post("/login", async (req, res) => {
     }, JWT_SECRET, { expiresIn: "1h" });
 
     res.json({ 
-      message: "Login erfolgreich.", 
+      message: "Login successful.", 
       token, 
       user: {
         ...user,
@@ -650,14 +611,13 @@ app.post("/login", async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Fehler beim Login:", error);
-    res.status(500).json({ message: "Fehler beim Login.", error: error.message });
+    console.error("Error during login:", error);
+    res.status(500).json({ message: "Error during login.", error: error.message });
   } finally {
     await session.close();
   }
 });
 
-// Profile GET Route
 app.get("/profile", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
   
@@ -755,15 +715,13 @@ app.put("/profile", async (req, res) => {
 
 app.put('/goal', async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
-  const { goal } = req.body; // Destructure goal from the request body
+  const { goal } = req.body; 
 
 
   try {
-    // JWT verification
     const decoded = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
 
-    // Connect to Neo4j
     const session = driver.session();
     const query = `
       MATCH (v:Volunteer {email: $email})
@@ -774,7 +732,6 @@ app.put('/goal', async (req, res) => {
     const params = { email, goal: goal || 30 };
     const result = await session.run(query, params);
 
-    // Send updated goal back in the response
     res.status(200).json({ message: 'Goal updated successfully', data: result.records[0].get('v') });
   } catch (err) {
     console.error('Error saving goal:', err);
@@ -829,7 +786,6 @@ app.post("/remove-volunteer", async (req, res) => {
 
   try {
     if (vid) {
-      // Remove volunteer using vid
       const query = `
         MATCH (v:Volunteer)-[r:ASSIGNED_TO]->(t:Task)
         WHERE ID(t) = $tid AND ID(v) = $vid
@@ -837,12 +793,10 @@ app.post("/remove-volunteer", async (req, res) => {
       `;
       await session.run(query, { vid, tid });
     } else {
-      // Authenticate user via token
       const token = req.headers.authorization?.split(" ")[1];
       const decoded = jwt.verify(token, JWT_SECRET);
       const email = decoded.email;
 
-      // Remove volunteer using email
       const query = `
         MATCH (v:Volunteer {email: $email})-[r:ASSIGNED_TO]->(t:Task)
         WHERE ID(t) = $tid
@@ -870,10 +824,8 @@ app.get('/goal', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
 
-    // Create Neo4j session
     const session = driver.session();
 
-    // Execute Neo4j query
     const result = await session.run(
       `
       MATCH (v:Volunteer {email: $email})
@@ -882,8 +834,6 @@ app.get('/goal', async (req, res) => {
       { email }
     );
 
-
-    // Check if we found a volunteer and if the goal exists
     if (result.records.length === 0) {
       return res.status(404).json({ message: 'Volunteer not found' });
     }
@@ -901,7 +851,6 @@ app.get('/goal', async (req, res) => {
   }
 });
 
-// Z1: Statistic Group Leaderboard
 app.get("/leaderboard/groups", async (req, res) => {
   try {
     const session = driver.session();
@@ -928,7 +877,6 @@ app.get("/leaderboard/groups", async (req, res) => {
   }
 });
 
-// Z2: Statistic Volunteer Leaderboard
 app.get("/leaderboard/volunteers", async (req, res) => {
   try {
     const session = driver.session();
@@ -994,7 +942,6 @@ app.get("/user-skills", async (req, res) => {
 });
 
 
-// Füge diese Route zum Backend hinzu
 app.post("/log-work", async (req, res) => {
   const session = driver.session();
   const { taskId, startTime, endTime, duration } = req.body;
@@ -1078,11 +1025,9 @@ app.get("/awards", async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
 
-    // Neo4j-Session erstellen
     const session = driver.session();
 
     try {
-      // Neo4j-Query ausführen
       const result = await session.run(
         `
         MATCH (v:Volunteer {email: $email})-[w:WORKED_ON]->(:Task)
@@ -1138,14 +1083,31 @@ app.get("/leaderboard/streaks", async (req, res) => {
   }
 });
 
-app.get("/skills", (req, res) => {
-  const query = req.query.query.toLowerCase();
-  const filteredSkills = skills.filter((skill) =>
-    skill.toLowerCase().includes(query)
-  );
-  res.json({ skills: filteredSkills });
-});
+app.get("/skills", async (req, res) => {
+  const { query = "" } = req.query;
+  const session = driver.session();
 
+  try {
+    const result = await session.run(
+      `MATCH (s:Skill)
+       WHERE 
+         toLower(s.name) CONTAINS toLower($query) OR
+         any(label IN s.altLabels WHERE toLower(label) CONTAINS toLower($query))
+       RETURN DISTINCT s.name AS name
+       LIMIT 50`,
+      { query }
+    );
+
+    const skills = result.records.map(record => record.get("name"));
+
+    res.json({ skills });
+  } catch (error) {
+    console.error("Error fetching skills:", error);
+    res.status(500).json({ error: "Error fetching skills" });
+  } finally {
+    await session.close();
+  }
+});
 
 
 // Start the server
