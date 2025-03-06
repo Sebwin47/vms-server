@@ -232,8 +232,8 @@ app.get("/admin-query", async (req, res) => {
       WITH t, v, assignedCount, assignedVolunteers, matchedSkills, bestMatchType,
         REDUCE(s = [], av IN assignedVolunteers |
           s + CASE 
-              WHEN EXISTS { MATCH (av)-[w2:WORKED_ON]->(task2:Task),
-                                  (v)-[w1:WORKED_ON]->(task1:Task)
+              WHEN EXISTS { MATCH (av)-[w2:WORKED_ON]->(task1:Task),
+                                  (v)-[w1:WORKED_ON]->(task1)
                             WHERE w1.startTime < w2.endTime 
                               AND w2.startTime < w1.endTime }
               THEN [av.givenName + " " + av.familyName]
