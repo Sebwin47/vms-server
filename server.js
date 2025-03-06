@@ -1109,6 +1109,128 @@ app.get("/skills", async (req, res) => {
   }
 });
 
+app.get('/check-leader', async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const session = driver.session();
+
+    const result = await session.run(`
+      MATCH (v:Volunteer {email: $email})-[:IS_PART_OF {leads: true}]->(g:Group)
+      OPTIONAL MATCH (vt:Volunteer)-[:IS_PART_OF]->(g)
+      RETURN count(*) > 0 as isLeader, COUNT(vt) as groupSize
+    `, { email: decoded.email });
+
+    const isLeader = result.records[0].get('isLeader');
+    const groupSize = result.records[0].get('groupSize').toNumber();  
+
+    res.json({ 
+      isLeader,
+      groupSize
+    });
+  } catch (error) {
+    console.error("Leadership check failed:", error);
+    res.status(500).json({ error: "Leadership check failed" });
+  }
+});
+
+
+app.post("/assign-group", async (req, res) => {
+  const { tid } = req.body;
+  const token = req.headers.authorization?.split(" ")[1];
+
+  const session = driver.session();
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const email = decoded.email;
+
+    const groupQuery = `
+      MATCH (v:Volunteer {email: $email})-[:IS_PART_OF {leads: true}]->(g:Group)
+      OPTIONAL MATCH (vt:Volunteer)-[:IS_PART_OF]->(g)
+      WITH g, COUNT(vt) AS groupSize
+      RETURN g, groupSize
+    `;
+    const groupResult = await session.run(groupQuery, { email });
+    if (groupResult.records.length === 0) {
+      return res.status(403).json({ error: "Not a leader of any group." });
+    }
+    const groupRecord = groupResult.records[0];
+    const group = groupRecord.get('g');
+    const groupSize = groupRecord.get('groupSize').toNumber();
+
+    const taskQuery = `
+      MATCH (t:Task)
+      WHERE ID(t) = $tid
+      OPTIONAL MATCH (g:Group)-[:ASSIGNED_TO]->(t)
+      OPTIONAL MATCH (v:Volunteer)-[:IS_PART_OF]->(g)
+      OPTIONAL MATCH (vInd:Volunteer)-[:ASSIGNED_TO]->(t)
+      WITH t, 
+          COUNT(DISTINCT v) + COUNT(DISTINCT vInd) AS assigned,
+          t.neededPersons AS needed,
+          COALESCE(t.tolerance, 0) AS tolerance
+      RETURN assigned, needed, tolerance
+    `;
+    const taskResult = await session.run(taskQuery, { tid: Number(tid) });
+    if (taskResult.records.length === 0) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+    const taskRecord = taskResult.records[0];
+    const assigned = taskRecord.get('assigned').toNumber();
+    const needed = taskRecord.get('needed').toNumber();
+    const tolerance = taskRecord.get('tolerance').toNumber();
+
+    if (assigned + groupSize > needed + tolerance) {
+      return res.status(400).json({ error: "Task capacity exceeded." });
+    }
+
+    const groupId = group.identity.toNumber();
+    const taskId = Number(tid);
+
+    await session.run(
+      `
+      MATCH (g:Group) WHERE ID(g) = $gid
+      MATCH (t:Task) WHERE ID(t) = $tid
+      MERGE (g)-[:ASSIGNED_TO]->(t)
+      `,
+      { gid: groupId, tid: taskId }
+    );
+
+    res.status(200).json({ message: "Group assigned successfully." });
+  } catch (error) {
+    console.error("Error assigning group:", error);
+    res.status(500).json({ error: "Internal server error." });
+  } finally {
+    await session.close();
+  }
+});
+
+
+app.post("/remove-group", async (req, res) => {
+  const { tid } = req.body;
+  const token = req.headers.authorization?.split(" ")[1];
+  const session = driver.session();
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const email = decoded.email;
+
+    await session.run(`
+      MATCH (v:Volunteer {email: $email})-[:IS_PART_OF {leads: true}]->(g:Group)
+      MATCH (g)-[r:ASSIGNED_TO]->(t:Task)
+      WHERE ID(t) = $tid
+      DELETE r
+    `, { email, tid });
+
+    res.status(200).json({ message: "Group removed successfully." });
+  } catch (error) {
+    console.error("Error removing group:", error);
+    res.status(500).json({ error: "Internal server error." });
+  } finally {
+    await session.close();
+  }
+});
+
 
 // Start the server
 app.listen(port, () => {
