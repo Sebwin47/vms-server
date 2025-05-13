@@ -1258,29 +1258,46 @@ app.get("/graph", async (req, res) => {
     const result = await session.run(query);
 
     const nodesMap = new Map();
+    const edgeSet = new Set();
     const edges = [];
+
+    const getLabel = (node) => {
+      if (node.properties.name) return node.properties.name;
+      if (node.properties.givenName || node.properties.familyName) {
+        return `${node.properties.givenName || ""} ${node.properties.familyName || ""}`.trim();
+      }
+      return "Unnamed";
+    };
 
     result.records.forEach(record => {
       const from = record.get("node");
       const to = record.get("related");
 
-      // Add nodes to map to avoid duplicates
+      // Add nodes if not yet in map
       [from, to].forEach(node => {
         const id = node.identity.toString();
         if (!nodesMap.has(id)) {
           nodesMap.set(id, {
             id,
-            label: node.properties.name || node.properties.givenName + " " + node.properties.familyName || "Unnamed",
-            type: node.labels[0].toLowerCase()
+            label: getLabel(node),
+            type: node.labels[0]?.toLowerCase() || "unknown"
           });
         }
       });
 
-      edges.push({
-        from: from.identity.toString(),
-        to: to.identity.toString(),
-        type: "CONNECTED"
-      });
+      // Add edge only if it's not already added
+      const fromId = from.identity.toString();
+      const toId = to.identity.toString();
+      const edgeSignature = `${fromId}-${toId}`;
+
+      if (!edgeSet.has(edgeSignature)) {
+        edges.push({
+          from: fromId,
+          to: toId,
+          type: "CONNECTED"
+        });
+        edgeSet.add(edgeSignature);
+      }
     });
 
     const nodes = Array.from(nodesMap.values());
@@ -1293,6 +1310,7 @@ app.get("/graph", async (req, res) => {
     await session.close();
   }
 });
+
 
 app.get("/graph", async (req, res) => {
   const session = driver.session();
@@ -1358,10 +1376,11 @@ app.get("/graph", async (req, res) => {
 });
 
 app.get("/graph2", async (req, res) => {
-  const { taskId = "" } = req.query; 
   const session = driver.session();
 
   try {
+    //TODO: FIX THIS QUERY we need to get all the nodes and edges
+    // and not just the ones that are connected to the task
     let query = `
       MATCH (t:Task)
       OPTIONAL MATCH (t)-[:HAS_LOCATION]->(p:Place)
@@ -1378,7 +1397,25 @@ app.get("/graph2", async (req, res) => {
 
     const nodes = [];
     const edges = [];
-    
+
+    const nodeIds = new Set();
+    const edgeSignatures = new Set();
+
+    const addNode = (entity, label, type) => {
+      const id = entity.identity.toString();
+      if (!nodeIds.has(id)) {
+        nodes.push({ id, label, type });
+        nodeIds.add(id);
+      }
+    };
+
+    const addEdge = (fromId, toId, type) => {
+      const signature = `${fromId}-${toId}-${type}`;
+      if (!edgeSignatures.has(signature)) {
+        edges.push({ from: fromId, to: toId, type });
+        edgeSignatures.add(signature);
+      }
+    };
 
     result.records.forEach(record => {
       const task = record.get('t');
@@ -1390,112 +1427,54 @@ app.get("/graph2", async (req, res) => {
       const category = record.get('c');
       const coordinator = record.get('coordinator');
 
-      
-      nodes.push({
-        id: task.identity.toString(),
-        label: task.properties.name,
-        type: 'task'
-      });
+      // Task node
+      addNode(task, task.properties.name, 'task');
 
-     
       if (place) {
-        nodes.push({
-          id: place.identity.toString(),
-          label: place.properties.addressLocality,
-          type: 'place'
-        });
-
-        edges.push({
-          from: task.identity.toString(),
-          to: place.identity.toString(),
-          type: 'HAS_LOCATION'
-        });
+        addNode(place, place.properties.addressLocality, 'place');
+        addEdge(task.identity.toString(), place.identity.toString(), 'HAS_LOCATION');
       }
 
-      // Add Skill nodes
       if (skill) {
-        nodes.push({
-          id: skill.identity.toString(),
-          label: skill.properties.name,
-          type: 'skill'
-        });
-
-        edges.push({
-          from: task.identity.toString(),
-          to: skill.identity.toString(),
-          type: 'REQUIRES_SKILL'
-        });
+        addNode(skill, skill.properties.name, 'skill');
+        addEdge(task.identity.toString(), skill.identity.toString(), 'REQUIRES_SKILL');
       }
 
       if (volunteer) {
-        nodes.push({
-          id: volunteer.identity.toString(),
-          label: `${volunteer.properties.givenName} ${volunteer.properties.familyName}`,
-          type: 'volunteer'
-        });
-
-        edges.push({
-          from: volunteer.identity.toString(),
-          to: task.identity.toString(),
-          type: 'ASSIGNED_TO'
-        });
+        addNode(
+          volunteer,
+          `${volunteer.properties.givenName} ${volunteer.properties.familyName}`,
+          'volunteer'
+        );
+        addEdge(volunteer.identity.toString(), task.identity.toString(), 'ASSIGNED_TO');
       }
 
       if (coordinator) {
-        nodes.push({
-          id: coordinator.identity.toString(),
-          label: `${coordinator.properties.givenName} ${coordinator.properties.familyName}`,
-          type: 'coordinator'
-        });
-
-        edges.push({
-          from: coordinator.identity.toString(),
-          to: task.identity.toString(),
-          type: 'MANAGES'
-        });
+        addNode(
+          coordinator,
+          `${coordinator.properties.givenName} ${coordinator.properties.familyName}`,
+          'coordinator'
+        );
+        addEdge(coordinator.identity.toString(), task.identity.toString(), 'MANAGES');
       }
 
       if (group) {
-        nodes.push({
-          id: group.identity.toString(),
-          label: group.properties.name || 'Group',
-          type: 'group'
-        });
-
-        edges.push({
-          from: group.identity.toString(),
-          to: task.identity.toString(),
-          type: 'ASSIGNED_TO'
-        });
+        addNode(group, group.properties.name || 'Group', 'group');
+        addEdge(group.identity.toString(), task.identity.toString(), 'ASSIGNED_TO');
 
         if (volunteerInGroup) {
-          nodes.push({
-            id: volunteerInGroup.identity.toString(),
-            label: `${volunteerInGroup.properties.givenName} ${volunteerInGroup.properties.familyName}`,
-            type: 'volunteer'
-          });
-
-          edges.push({
-            from: volunteerInGroup.identity.toString(),
-            to: group.identity.toString(),
-            type: 'IS_PART_OF'
-          });
+          addNode(
+            volunteerInGroup,
+            `${volunteerInGroup.properties.givenName} ${volunteerInGroup.properties.familyName}`,
+            'volunteer'
+          );
+          addEdge(volunteerInGroup.identity.toString(), group.identity.toString(), 'IS_PART_OF');
         }
       }
 
-      // Add TaskCategory node
       if (category) {
-        nodes.push({
-          id: category.identity.toString(),
-          label: category.properties.name,
-          type: 'taskcategory'
-        });
-
-        edges.push({
-          from: task.identity.toString(),
-          to: category.identity.toString(),
-          type: 'IS_INSTANCE_OF'
-        });
+        addNode(category, category.properties.name, 'taskcategory');
+        addEdge(task.identity.toString(), category.identity.toString(), 'IS_INSTANCE_OF');
       }
     });
 
