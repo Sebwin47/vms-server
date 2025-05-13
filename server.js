@@ -1231,6 +1231,285 @@ app.post("/remove-group", async (req, res) => {
   }
 });
 
+app.get("/graph", async (req, res) => {
+  const session = driver.session();
+
+  try {
+    const query = `
+      // Alle verbundenen Nodes, außer Skill-Nodes (also beliebige Tiefe)
+      MATCH (v:Volunteer)-[*]->(n)
+      WHERE NOT n:Skill
+      RETURN v AS node, n AS related
+      UNION ALL
+      MATCH (c:Coordinator)-[*]->(n)
+      WHERE NOT n:Skill
+      RETURN c AS node, n AS related
+
+      UNION ALL
+
+      // Skill-Nodes nur bei direkter Verbindung (Tiefe 1)
+      MATCH (v:Volunteer)-[*1]->(s:Skill)
+      RETURN v AS node, s AS related
+      UNION ALL
+      MATCH (c:Coordinator)-[*1]->(s:Skill)
+      RETURN c AS node, s AS related
+    `;
+
+    const result = await session.run(query);
+
+    const nodesMap = new Map();
+    const edges = [];
+
+    result.records.forEach(record => {
+      const from = record.get("node");
+      const to = record.get("related");
+
+      // Add nodes to map to avoid duplicates
+      [from, to].forEach(node => {
+        const id = node.identity.toString();
+        if (!nodesMap.has(id)) {
+          nodesMap.set(id, {
+            id,
+            label: node.properties.name || node.properties.givenName + " " + node.properties.familyName || "Unnamed",
+            type: node.labels[0].toLowerCase()
+          });
+        }
+      });
+
+      edges.push({
+        from: from.identity.toString(),
+        to: to.identity.toString(),
+        type: "CONNECTED"
+      });
+    });
+
+    const nodes = Array.from(nodesMap.values());
+
+    res.json({ nodes, edges });
+  } catch (error) {
+    console.error("Error building graph:", error);
+    res.status(500).json({ error: "Error building graph" });
+  } finally {
+    await session.close();
+  }
+});
+
+app.get("/graph", async (req, res) => {
+  const session = driver.session();
+
+  try {
+    const query = `
+      // Alle verbundenen Nodes, außer Skill-Nodes (also beliebige Tiefe)
+      MATCH (v:Volunteer)-[*]->(n)
+      WHERE NOT n:Skill
+      RETURN v AS node, n AS related
+      UNION ALL
+      MATCH (c:Coordinator)-[*]->(n)
+      WHERE NOT n:Skill
+      RETURN c AS node, n AS related
+
+      UNION ALL
+
+      // Skill-Nodes nur bei direkter Verbindung (Tiefe 1)
+      MATCH (v:Volunteer)-[*1]->(s:Skill)
+      RETURN v AS node, s AS related
+      UNION ALL
+      MATCH (c:Coordinator)-[*1]->(s:Skill)
+      RETURN c AS node, s AS related
+    `;
+
+    const result = await session.run(query);
+
+    const nodesMap = new Map();
+    const edges = [];
+
+    result.records.forEach(record => {
+      const from = record.get("node");
+      const to = record.get("related");
+
+      // Add nodes to map to avoid duplicates
+      [from, to].forEach(node => {
+        const id = node.identity.toString();
+        if (!nodesMap.has(id)) {
+          nodesMap.set(id, {
+            id,
+            label: node.properties.name || node.properties.givenName + " " + node.properties.familyName || "Unnamed",
+            type: node.labels[0].toLowerCase()
+          });
+        }
+      });
+
+      edges.push({
+        from: from.identity.toString(),
+        to: to.identity.toString(),
+        type: "CONNECTED"
+      });
+    });
+
+    const nodes = Array.from(nodesMap.values());
+
+    res.json({ nodes, edges });
+  } catch (error) {
+    console.error("Error building graph:", error);
+    res.status(500).json({ error: "Error building graph" });
+  } finally {
+    await session.close();
+  }
+});
+
+app.get("/graph2", async (req, res) => {
+  const { taskId = "" } = req.query; 
+  const session = driver.session();
+
+  try {
+    let query = `
+      MATCH (t:Task)
+      OPTIONAL MATCH (t)-[:HAS_LOCATION]->(p:Place)
+      OPTIONAL MATCH (t)-[:REQUIRES_SKILL]->(s:Skill)
+      OPTIONAL MATCH (v:Volunteer)-[:ASSIGNED_TO]->(t)
+      OPTIONAL MATCH (group:Group)-[:ASSIGNED_TO]->(t)
+      OPTIONAL MATCH (volunteerInGroup:Volunteer)-[:IS_PART_OF]->(group)
+      OPTIONAL MATCH (t)-[:IS_INSTANCE_OF]->(c:TaskCategory)
+      OPTIONAL MATCH (t)<-[:MANAGES]-(coordinator:Coordinator)
+      RETURN t, p, s, v, group, volunteerInGroup, c, coordinator
+    `;
+
+    const result = await session.run(query);
+
+    const nodes = [];
+    const edges = [];
+    
+
+    result.records.forEach(record => {
+      const task = record.get('t');
+      const place = record.get('p');
+      const skill = record.get('s');
+      const volunteer = record.get('v');
+      const group = record.get('group');
+      const volunteerInGroup = record.get('volunteerInGroup');
+      const category = record.get('c');
+      const coordinator = record.get('coordinator');
+
+      
+      nodes.push({
+        id: task.identity.toString(),
+        label: task.properties.name,
+        type: 'task'
+      });
+
+     
+      if (place) {
+        nodes.push({
+          id: place.identity.toString(),
+          label: place.properties.addressLocality,
+          type: 'place'
+        });
+
+        edges.push({
+          from: task.identity.toString(),
+          to: place.identity.toString(),
+          type: 'HAS_LOCATION'
+        });
+      }
+
+      // Add Skill nodes
+      if (skill) {
+        nodes.push({
+          id: skill.identity.toString(),
+          label: skill.properties.name,
+          type: 'skill'
+        });
+
+        edges.push({
+          from: task.identity.toString(),
+          to: skill.identity.toString(),
+          type: 'REQUIRES_SKILL'
+        });
+      }
+
+      if (volunteer) {
+        nodes.push({
+          id: volunteer.identity.toString(),
+          label: `${volunteer.properties.givenName} ${volunteer.properties.familyName}`,
+          type: 'volunteer'
+        });
+
+        edges.push({
+          from: volunteer.identity.toString(),
+          to: task.identity.toString(),
+          type: 'ASSIGNED_TO'
+        });
+      }
+
+      if (coordinator) {
+        nodes.push({
+          id: coordinator.identity.toString(),
+          label: `${coordinator.properties.givenName} ${coordinator.properties.familyName}`,
+          type: 'coordinator'
+        });
+
+        edges.push({
+          from: coordinator.identity.toString(),
+          to: task.identity.toString(),
+          type: 'MANAGES'
+        });
+      }
+
+      if (group) {
+        nodes.push({
+          id: group.identity.toString(),
+          label: group.properties.name || 'Group',
+          type: 'group'
+        });
+
+        edges.push({
+          from: group.identity.toString(),
+          to: task.identity.toString(),
+          type: 'ASSIGNED_TO'
+        });
+
+        if (volunteerInGroup) {
+          nodes.push({
+            id: volunteerInGroup.identity.toString(),
+            label: `${volunteerInGroup.properties.givenName} ${volunteerInGroup.properties.familyName}`,
+            type: 'volunteer'
+          });
+
+          edges.push({
+            from: volunteerInGroup.identity.toString(),
+            to: group.identity.toString(),
+            type: 'IS_PART_OF'
+          });
+        }
+      }
+
+      // Add TaskCategory node
+      if (category) {
+        nodes.push({
+          id: category.identity.toString(),
+          label: category.properties.name,
+          type: 'taskcategory'
+        });
+
+        edges.push({
+          from: task.identity.toString(),
+          to: category.identity.toString(),
+          type: 'IS_INSTANCE_OF'
+        });
+      }
+    });
+
+    res.json({ nodes, edges });
+  } catch (error) {
+    console.error("Error fetching graph:", error);
+    res.status(500).json({ error: "Error fetching graph data" });
+  } finally {
+    await session.close();
+  }
+});
+
+
+
 
 // Start the server
 app.listen(port, () => {
