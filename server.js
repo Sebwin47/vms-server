@@ -1312,69 +1312,6 @@ app.get("/graph", async (req, res) => {
 });
 
 
-app.get("/graph", async (req, res) => {
-  const session = driver.session();
-
-  try {
-    const query = `
-      // Alle verbundenen Nodes, außer Skill-Nodes (also beliebige Tiefe)
-      MATCH (v:Volunteer)-[*]->(n)
-      WHERE NOT n:Skill
-      RETURN v AS node, n AS related
-      UNION ALL
-      MATCH (c:Coordinator)-[*]->(n)
-      WHERE NOT n:Skill
-      RETURN c AS node, n AS related
-
-      UNION ALL
-
-      // Skill-Nodes nur bei direkter Verbindung (Tiefe 1)
-      MATCH (v:Volunteer)-[*1]->(s:Skill)
-      RETURN v AS node, s AS related
-      UNION ALL
-      MATCH (c:Coordinator)-[*1]->(s:Skill)
-      RETURN c AS node, s AS related
-    `;
-
-    const result = await session.run(query);
-
-    const nodesMap = new Map();
-    const edges = [];
-
-    result.records.forEach(record => {
-      const from = record.get("node");
-      const to = record.get("related");
-
-      // Add nodes to map to avoid duplicates
-      [from, to].forEach(node => {
-        const id = node.identity.toString();
-        if (!nodesMap.has(id)) {
-          nodesMap.set(id, {
-            id,
-            label: node.properties.name || node.properties.givenName + " " + node.properties.familyName || "Unnamed",
-            type: node.labels[0].toLowerCase()
-          });
-        }
-      });
-
-      edges.push({
-        from: from.identity.toString(),
-        to: to.identity.toString(),
-        type: "CONNECTED"
-      });
-    });
-
-    const nodes = Array.from(nodesMap.values());
-
-    res.json({ nodes, edges });
-  } catch (error) {
-    console.error("Error building graph:", error);
-    res.status(500).json({ error: "Error building graph" });
-  } finally {
-    await session.close();
-  }
-});
-
 app.get("/graph2", async (req, res) => {
   const session = driver.session();
 
