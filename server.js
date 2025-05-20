@@ -1236,23 +1236,28 @@ app.get("/graph", async (req, res) => {
 
   try {
     const query = `
-      // Alle verbundenen Nodes, außer Skill-Nodes (also beliebige Tiefe)
-      MATCH (v:Volunteer)-[*]->(n)
+     // Alle verbundenen Nodes, außer Skill-Nodes (also beliebige Tiefe)
+      MATCH path=(v:Volunteer)-[*]->(n)
       WHERE NOT n:Skill
-      RETURN v AS node, n AS related
-      UNION ALL
-      MATCH (c:Coordinator)-[*]->(n)
+      UNWIND relationships(path) AS r
+      WITH startNode(r) AS fromNode, endNode(r) AS toNode, r
+      RETURN DISTINCT fromNode, toNode, r
+
+      UNION
+
+      MATCH path=(c:Coordinator)-[*]->(n)
       WHERE NOT n:Skill
-      RETURN c AS node, n AS related
+      UNWIND relationships(path) AS r
+      WITH startNode(r) AS fromNode, endNode(r) AS toNode, r
+      RETURN DISTINCT fromNode, toNode, r
 
-      UNION ALL
+      UNION
 
-      // Skill-Nodes nur bei direkter Verbindung (Tiefe 1)
-      MATCH (v:Volunteer)-[*1]->(s:Skill)
-      RETURN v AS node, s AS related
-      UNION ALL
-      MATCH (c:Coordinator)-[*1]->(s:Skill)
-      RETURN c AS node, s AS related
+      MATCH (v:Volunteer)-[r]->(s:Skill)
+      RETURN v AS fromNode, s AS toNode, r
+      UNION
+      MATCH (c:Coordinator)-[r]->(s:Skill)
+      RETURN c AS fromNode, s AS toNode, r
     `;
 
     const result = await session.run(query);
@@ -1263,6 +1268,7 @@ app.get("/graph", async (req, res) => {
 
     const getLabel = (node) => {
       if (node.properties.name) return node.properties.name;
+      if (node.properties.addressRegion) return node.properties.addressRegion;
       if (node.properties.givenName || node.properties.familyName) {
         return `${node.properties.givenName || ""} ${node.properties.familyName || ""}`.trim();
       }
@@ -1270,10 +1276,10 @@ app.get("/graph", async (req, res) => {
     };
 
     result.records.forEach(record => {
-      const from = record.get("node");
-      const to = record.get("related");
+      const from = record.get("fromNode");
+      const to = record.get("toNode");
+      const rel = record.get("r");
 
-      // Add nodes if not yet in map
       [from, to].forEach(node => {
         const id = node.identity.toString();
         if (!nodesMap.has(id)) {
@@ -1285,16 +1291,16 @@ app.get("/graph", async (req, res) => {
         }
       });
 
-      // Add edge only if it's not already added
       const fromId = from.identity.toString();
       const toId = to.identity.toString();
-      const edgeSignature = `${fromId}-${toId}`;
+      const relType = rel.type;
+      const edgeSignature = `${fromId}-${toId}-${relType}`;
 
       if (!edgeSet.has(edgeSignature)) {
         edges.push({
           from: fromId,
           to: toId,
-          type: "CONNECTED"
+          type: relType
         });
         edgeSet.add(edgeSignature);
       }
@@ -1310,122 +1316,6 @@ app.get("/graph", async (req, res) => {
     await session.close();
   }
 });
-
-
-app.get("/graph2", async (req, res) => {
-  const session = driver.session();
-
-  try {
-    //TODO: FIX THIS QUERY we need to get all the nodes and edges
-    // and not just the ones that are connected to the task
-    let query = `
-      MATCH (t:Task)
-      OPTIONAL MATCH (t)-[:HAS_LOCATION]->(p:Place)
-      OPTIONAL MATCH (t)-[:REQUIRES_SKILL]->(s:Skill)
-      OPTIONAL MATCH (v:Volunteer)-[:ASSIGNED_TO]->(t)
-      OPTIONAL MATCH (group:Group)-[:ASSIGNED_TO]->(t)
-      OPTIONAL MATCH (volunteerInGroup:Volunteer)-[:IS_PART_OF]->(group)
-      OPTIONAL MATCH (t)-[:IS_INSTANCE_OF]->(c:TaskCategory)
-      OPTIONAL MATCH (t)<-[:MANAGES]-(coordinator:Coordinator)
-      RETURN t, p, s, v, group, volunteerInGroup, c, coordinator
-    `;
-
-    const result = await session.run(query);
-
-    const nodes = [];
-    const edges = [];
-
-    const nodeIds = new Set();
-    const edgeSignatures = new Set();
-
-    const addNode = (entity, label, type) => {
-      const id = entity.identity.toString();
-      if (!nodeIds.has(id)) {
-        nodes.push({ id, label, type });
-        nodeIds.add(id);
-      }
-    };
-
-    const addEdge = (fromId, toId, type) => {
-      const signature = `${fromId}-${toId}-${type}`;
-      if (!edgeSignatures.has(signature)) {
-        edges.push({ from: fromId, to: toId, type });
-        edgeSignatures.add(signature);
-      }
-    };
-
-    result.records.forEach(record => {
-      const task = record.get('t');
-      const place = record.get('p');
-      const skill = record.get('s');
-      const volunteer = record.get('v');
-      const group = record.get('group');
-      const volunteerInGroup = record.get('volunteerInGroup');
-      const category = record.get('c');
-      const coordinator = record.get('coordinator');
-
-      // Task node
-      addNode(task, task.properties.name, 'task');
-
-      if (place) {
-        addNode(place, place.properties.addressLocality, 'place');
-        addEdge(task.identity.toString(), place.identity.toString(), 'HAS_LOCATION');
-      }
-
-      if (skill) {
-        addNode(skill, skill.properties.name, 'skill');
-        addEdge(task.identity.toString(), skill.identity.toString(), 'REQUIRES_SKILL');
-      }
-
-      if (volunteer) {
-        addNode(
-          volunteer,
-          `${volunteer.properties.givenName} ${volunteer.properties.familyName}`,
-          'volunteer'
-        );
-        addEdge(volunteer.identity.toString(), task.identity.toString(), 'ASSIGNED_TO');
-      }
-
-      if (coordinator) {
-        addNode(
-          coordinator,
-          `${coordinator.properties.givenName} ${coordinator.properties.familyName}`,
-          'coordinator'
-        );
-        addEdge(coordinator.identity.toString(), task.identity.toString(), 'MANAGES');
-      }
-
-      if (group) {
-        addNode(group, group.properties.name || 'Group', 'group');
-        addEdge(group.identity.toString(), task.identity.toString(), 'ASSIGNED_TO');
-
-        if (volunteerInGroup) {
-          addNode(
-            volunteerInGroup,
-            `${volunteerInGroup.properties.givenName} ${volunteerInGroup.properties.familyName}`,
-            'volunteer'
-          );
-          addEdge(volunteerInGroup.identity.toString(), group.identity.toString(), 'IS_PART_OF');
-        }
-      }
-
-      if (category) {
-        addNode(category, category.properties.name, 'taskcategory');
-        addEdge(task.identity.toString(), category.identity.toString(), 'IS_INSTANCE_OF');
-      }
-    });
-
-    res.json({ nodes, edges });
-  } catch (error) {
-    console.error("Error fetching graph:", error);
-    res.status(500).json({ error: "Error fetching graph data" });
-  } finally {
-    await session.close();
-  }
-});
-
-
-
 
 // Start the server
 app.listen(port, () => {
